@@ -33,7 +33,7 @@
 //  -Disconnecting the battery while in a charging state will cause and overshoot of voltage on the battery side.
 //  This could damage any loads that are running from the battery, including the arduino, charge controller, 
 //  and computer (if it's connected at the time)
-//  -Setting the pulseWidth to values less than 40% for even a few milliseconds will cause the low side MOSFET
+//  -Setting the pulseWidth to values less than 30% for even a few milliseconds will cause the low side MOSFET
 //  to short out and fail (sometimes violently).
 //
 //----------------------------------------------------------------------------------------------------
@@ -75,6 +75,7 @@ int panelADC = 0;             // for sending through serial
 int batteryADC = 0;           // for sending through serial
 int state = 0;                // for sending through serial
 int LEDstate = LOW;           // to record the state of the LED
+//int errorCount = 0;           // record the # of times an error has occured
 int32_t frequency = 40000;    // Frequency (in HZ)
 unsigned long time = 0;       // Timer variable for timed charging cycles
 
@@ -90,8 +91,9 @@ void setup() {
   pinMode(13, OUTPUT);                                        // set the LED pin as an output
   pinMode(load, OUTPUT);                                      // set the load pin as an output
   pinMode(shutDown, OUTPUT);                                  // set the shutDown pin as an output
+  pinMode(fan, OUTPUT);                                       // set the fan pin as an output
   disable_charger();                                          // make sure the MOSFET driver is off
-  InitTimersSafe();                                           // This is part of the PWM library. It allows you to set any* PWM frequency you want
+  InitTimersSafe();                                           // This is part of the PWM library. It allows you to set almost any PWM frequency you want
   charger_state = sleep;                                      // start with charger state as sleep
   
   bool success = SetPinFrequencySafe(driver, frequency);      // if setting the frequency to the desired pin was successful
@@ -114,8 +116,8 @@ void loop() {          // Main loop
   mode_select();       // use that info to decide what charging state we should be in
   set_charger();       // run the selected charger sequence
   run_load();          // turn the load on or off, depending on the battery voltage
-  run_fan();           // turn the load on or off, depending on charger state (most heat is created in bulk)
-  
+  run_fan();           // turn the fan on or off, depending on the charging cycle
+    
   //Use only one of these 2:
   //sendtogui();         // for use with processing sketch
   print_data();        // print data to the serial port so that humans know what you're doing
@@ -142,8 +144,8 @@ void read_data() {                                   // function for reading ana
   //panelADC = panelADC/4;                             // for sending through serial (use with sendtogui)
   //batteryADC = batteryADC/4;                         // for sending through serial (use with sendtogui)
   
-  panelVolts = (panelVolts*488)/1282;                // multiply the averaged ADC value by the scaling factor to get a number in deci volts
-  batteryVolts = (batteryVolts*488)/2500;            // multiply the averaged ADC value by the scaling factor to get a number in deci volts
+  panelVolts = (panelVolts*488)/1197;                // multiply the averaged ADC value by the scaling factor to get a number in deci volts
+  batteryVolts = (batteryVolts*488)/2441;            // multiply the averaged ADC value by the scaling factor to get a number in deci volts
   
 }
 
@@ -197,6 +199,7 @@ void set_charger(){                                                             
       error_blink();                                                                          // blink LED to indicate an error
       SOC = "Error";
       state = 4;
+      errorCount++;
       break;                                                                                  // this state needs a reset to escape from
       
     default:                                                                                  // if none of the other cases are satisfied,
@@ -208,7 +211,7 @@ void set_charger(){                                                             
 }
 
 void run_charger(){
-  pulseWidth = constrain (pulseWidth, 100, 245);     // prevent overflow of pulse width and not fully on or off for the charge pump
+  pulseWidth = constrain (pulseWidth, 75, 245);      // prevent overflow of pulse width and not fully on or off for the charge pump
   pwm = map(pulseWidth, 0, 255, 0, 100);             // use pulseWidth to get a % value and store it in pwm
   pwmWrite(driver, pulseWidth);                      // send the new pulseWidth to the MOSFET driver
   digitalWrite(shutDown, HIGH);                      // enable the MOSFET driver (enabling should always be done after sending pulseWidth)
@@ -248,10 +251,10 @@ void CVM(){                                                // Constant Voltage M
     else pulseWidth = 245;                                 // this is to keep pulseWidth from overflowing
   }
   else if(panelVolts < Vcvm){                              // or if the panel voltage is less than the calculated MPP voltage,
-    if (pulseWidth > 100){                                 // this is to keep pulseWidth from overflowing
+    if (pulseWidth > 75){                                  // this is to keep pulseWidth from overflowing
       pulseWidth = pulseWidth - stepAmount;                // remove some of the load from the panel
     }
-    else pulseWidth = 100;                                 // this is to keep pulseWidth from overflowing
+    else pulseWidth = 75;                                  // this is to keep pulseWidth from overflowing
   }
 }
 
@@ -263,19 +266,19 @@ void update_Vcvm(){
     Voc += analogRead(panelMeter);              // read the panel voltage 100 times and add the values together
   }
   Voc = Voc/100;
-  Voc = (Voc*488)/1282;                         // multiply it by the scaling factor to produce a number in deci Volts
+  Voc = (Voc*488)/1197;                         // multiply it by the scaling factor to produce a number in deci Volts
   Vcvm = (Voc*76)/100;                          // Vcvm is 76% of Voc
   b = 1;                                        // reset the timer
 }
 
-void run_fan(){                                 // if you have a fan attached to load output
-  switch (charger_state){                       // run only in one case
-    case bulk:                                  // if we're in bulk charge
-      digitalWrite(fan, HIGH);                  // Turn on the fan
-      break;
-    default:                                    // All other cases
-      digitalWrite(fan, LOW);                   // Turn off the fan
-      break;
+void run_fan(){
+  switch(charger_state){
+    case bulk:
+    digitalWrite(fan, HIGH);
+    break;
+    default:
+    digitalWrite(fan, LOW);
+    break;
   }
 }
 
