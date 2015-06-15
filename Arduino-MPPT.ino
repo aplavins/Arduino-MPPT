@@ -7,8 +7,8 @@
 //  It is based of work done by Julian Ilett (256.co.uk), Debasish Dutta/deba168,
 //  and Tim Nolan (www.timnolan.com).
 //
-//  The code could be more streamlined by eliminating the use of floats but I find it
-//  easier to code and easier to understand.
+//  Updated to use intergers instead of floats. The math is faster and more accurate.
+//  All units are in deci Volts
 //
 //  This is an open source project and you are free to use any code you like.
 //  Please give credit.
@@ -44,43 +44,38 @@
 // Wiring:
 // A0 - Voltage divider (solar)
 // A1 - Voltage divider (battery)
-// D2 - Load Mosfet
+// D4 - Load Mosfet
 // D3 - 2104 MOSFET driver IN    (needs to be 3 or 11 with safe timer)
-// D4 - 2104 MOSFET driver SD
+// D5 - 2104 MOSFET driver SD
+// D6 - fan
 
-// Voltage dividers:
-// If you are using different resistor values, you'll have to modify these multipliers. A find and replace works well.
-// I also reccomend using 1% tolerance resistors for more accurate readings.
-// In version 3 I used a multiplyer to compensate for the arduino's voltage regulator output but I feel that the difference is minor.
-// ADC volts/div = 0.004887585532747
-// panel voltage divider: (+) 100k (sig) 14.7k (-) = 0.128160418482999
-// example: 30V input, ADC reads x. Multiply that by 0.004887585532747 = V at the input. Divide by 0.128160418482999 to get input voltage.
-// scaling factor is ADC value * 0.038136466707895 = input voltage
-// battery voltage divider: (+) 75k (sig) 25k (-) = 0.25
-// example: 13V output to the battery, ADC reads x. Multiply that by 0.004887585532747 = V at the input. Divide by 0.25 to get the input voltage.
-// scaling factor is ADC value * 0.019550342130987 = battery voltage
+#define panelMeter A0         // Analog input pin for PV voltmeter
+#define batteryMeter A1       // Analog input pin for battery voltmeter
+#define driver 3              // PWM output pin to mosfet driver (needs to be 3 or 11 with safe timer)
+#define shutDown 5            // connected to shutdown pin of mosfet driver (needs to be a PWM pin)
+#define fan 6                 // digital pin controlling the fan (needs to be a PWM pin)
+#define load 4                // digital pin controlling the load MOSFET (use 4 because PWM is not needed)
+#define Vbulk 130             // Bulk voltage set-point (deci Volts)
+#define lowBatt 110           // Low battery voltage set-point (deci Volts)
+#define Vmax 150              // Maximum voltage the batteries should hit before throwing an error (deci Volts)
+#define check 15000           // 15 seconds in milliseconds
+#define Vfloat 136            // Float voltage set-point (deci Volts)
 
-const int panelMeter = A0;    // Analog input pin for PV voltmeter
-const int batteryMeter = A1;  // Analog input pin for battery voltmeter
-const int driver = 3;         // PWM output pin to mosfet driver (needs to be 3 or 11 with safe timer)
-const int shutDown = 4;       // connected to shutdown pin of mosfet driver
-const int load = 2;           // digital pin controlling the load MOSFET
-const int Vbulk = 13;         // Bulk voltage set-point
-const int lowBatt = 11;       // Low battery voltage set-point
-const int Vmax = 15;          // Maximum voltage the batteries should hit before throwing an error
-const long check = 15000;     // 15 seconds in milliseconds
-const float Vfloat = 13.6;    // Float voltage set-point
-
-float panelVolts = 0;         // Solar panel Voltage
-float batteryVolts = 12;      // Battery Voltage
-float Voc = 0;                // Panel open-circuit voltage
-float Vcvm = 0;               // Estimted voltage for MPP with CVM
-int pulseWidth = 245;         // Digital value of pwm (should never be 0 or 255)
-int lastpulseWidth = 245;     // remember the value of pulseWidth for random resets
+long panelVolts = 0;          // Solar panel Voltage (deci Volts)
+long batteryVolts = 120;      // Battery Voltage (deci Volts)
+long Voc = 0;                 // Panel open-circuit voltage (deci Volts)
+long Vcvm = 0;                // Estimted voltage for MPP with CVM (deci Volts)
+int pulseWidth = 100;         // Digital value of pwm (should never be 0 or 255)
+int lastpulseWidth = 100;     // remember the value of pulseWidth for random resets
 int pwm = 0;                  // Percentage of PWM
 int b = 1;                    // do once
 int stepAmount = 1;           // Scaling factor of pwm for large differences in voltage
-int32_t frequency = 50000;    // Frequency (in HZ)
+int inByte = 0;               // incoming serial byte
+int panelADC = 0;             // for sending through serial
+int batteryADC = 0;           // for sending through serial
+int state = 0;                // for sending through serial
+int LEDstate = LOW;           // to record the state of the LED
+int32_t frequency = 40000;    // Frequency (in HZ)
 unsigned long time = 0;       // Timer variable for timed charging cycles
 
 String enable = "starting";   // string of text to show enable pin of MOSFET driver
@@ -109,6 +104,7 @@ void setup() {
     Serial.println("Timer frequency set failed!");            // and print it to the serial port
   }
   update_Vcvm();
+  //establishContact();  // send a byte to establish contact until receiver responds (use with sendtogui)
 }
 
 void loop() {          // Main loop
@@ -118,37 +114,47 @@ void loop() {          // Main loop
   mode_select();       // use that info to decide what charging state we should be in
   set_charger();       // run the selected charger sequence
   run_load();          // turn the load on or off, depending on the battery voltage
+  run_fan();           // turn the load on or off, depending on charger state (most heat is created in bulk)
+  
+  //Use only one of these 2:
+  //sendtogui();         // for use with processing sketch
   print_data();        // print data to the serial port so that humans know what you're doing
 
 }
 
 void read_data() {                                   // function for reading analog inputs
   
-  for(int i=0;i<100;i++){                            // read the inputs 100 times and add them together. The ADC has a capacitance that messes with the readings.
-    panelVolts+=analogRead(panelMeter);              // read the input voltage from solar panel
-    delay(1);                                        // wait a bit between readings
+  panelVolts = 0;
+  for(int i=0;i<100;i++){
+    panelVolts += analogRead(panelMeter);            // read the panel voltage 100 times and add the values together
   }
-  for(int i=0;i<100;i++){                            // read the inputs 100 times and add them together. The ADC has a capacitance that messes with the readings.
-    batteryVolts+=analogRead(batteryMeter);          // read the battery voltage 
-    delay(1);                                        // wait a bit between readings
+  batteryVolts = 0;
+  for(int i=0;i<100;i++){
+    batteryVolts += analogRead(batteryMeter);        // read the battery voltage 100 times and add the values together
   }
-
-  panelVolts = panelVolts/100;                       // devide the result by 100 to get the average value
-  batteryVolts = batteryVolts/100;                   // devide the result by 100 to get the average value
   
-  panelVolts = panelVolts*0.038136466707895;         // multiply the averaged ADC value by the scaling factor to get a number in volts
-  batteryVolts = batteryVolts*0.019550342130987;     // multiply the averaged ADC value by the scaling factor to get a number in volts
+  panelVolts = panelVolts/100;                       // Divide by 100 to get the average value
+  batteryVolts = batteryVolts/100;                   // Divide by 100 to get the average value
+
+  //panelADC = panelVolts;                             // for sending through serial (use with sendtogui)
+  //batteryADC = batteryVolts;                         // for sending through serial (use with sendtogui)
+  
+  //panelADC = panelADC/4;                             // for sending through serial (use with sendtogui)
+  //batteryADC = batteryADC/4;                         // for sending through serial (use with sendtogui)
+  
+  panelVolts = (panelVolts*488)/1282;                // multiply the averaged ADC value by the scaling factor to get a number in deci volts
+  batteryVolts = (batteryVolts*488)/2500;            // multiply the averaged ADC value by the scaling factor to get a number in deci volts
   
 }
 
 void mode_select(){
-  if (batteryVolts < 10) charger_state = no_battery;                                          // If battery voltage is below 10, there is no battery connected or dead / wrong battery
+  if (batteryVolts < 100) charger_state = no_battery ;                                        // If battery voltage is below 10, there is no battery connected or dead / wrong battery
   else if (batteryVolts > Vmax) charger_state = error;                                        // If battery voltage is over 15, there's a problem
-  else if ((batteryVolts > 10) && (batteryVolts < Vmax) && (panelVolts > batteryVolts + 1)){  // If battery voltage is in the normal range and there is light on the panel
-    if (batteryVolts <= (Vfloat-0.1)) charger_state = bulk;                                   // If battery voltage is less than 13.5, go into bulk charging
-    else if (batteryVolts >= Vfloat) charger_state = Float;                                   // If battery voltage is above 13.6, go into float charging
+  else if ((batteryVolts > 100) && (batteryVolts < Vmax) && (panelVolts > batteryVolts)){     // If battery voltage is in the normal range and there is light on the panel
+    if (batteryVolts >= (Vfloat-1)) charger_state = Float;                                    // If battery voltage is above 13.5, go into float charging
+    else charger_state = bulk;                                                                // If battery voltage is less than 13.5, go into bulk charging
   }
-  else charger_state = sleep;                                                                 // If there's no light on the panel, go to sleep
+  else if (panelVolts < 100) charger_state = sleep;                                           // If there's no light on the panel, go to sleep
 }
 
 void set_charger(){                                                                           // function for selecting the charging state
@@ -158,13 +164,15 @@ void set_charger(){                                                             
     case no_battery:                                                                          // if none of the other cases are satisfied,
       disable_charger();                                                                      // turn off the MOSFET driver
       error_blink();                                                                          // blink LED to indicate an error
-      SOC = "No Battery!"; 
+      SOC = "No Battery!";
+      state = 0; 
       break;
     
     case sleep:                                                                               // the charger is in the sleep state
       disable_charger();                                                                      // disable the charger so that current doesn't leak back into the solar panel
       SOC = "Sleep";
       sleep_blink();
+      state = 1;
       break;
       
     case bulk:                                                                                // the charger is in the bulk state
@@ -172,7 +180,7 @@ void set_charger(){                                                             
       CVM();                                                                                  // begin the MPPT algorithm
       run_charger();                                                                          // enable the MOSFET driver
       digitalWrite(13, HIGH);                                                                 // turn the LED on to indicate bulk
-      //bulk_blink();                                                                         // this takes too long
+      state = 2;
       break;
       
     case Float:                                                                               // the charger is in the float state, it uses PWM instead of MPPT
@@ -181,19 +189,20 @@ void set_charger(){                                                             
       if (batteryVolts < Vfloat) run_charger();                                               // If battery voltage is below 13.6 enable the MOSFET driver
       else disable_charger();                                                                 // If above, disable the MOSFET driver
       digitalWrite(13, LOW);                                                                  // Turn the LED off to indicate float
-      //float_blink();                                                                        // this takes too long
+      state = 3;
       break;
       
     case error:                                                                               // if there's something wrong
       disable_charger();                                                                      // turn off the MOSFET driver
       error_blink();                                                                          // blink LED to indicate an error
       SOC = "Error";
+      state = 4;
       break;                                                                                  // this state needs a reset to escape from
       
     default:                                                                                  // if none of the other cases are satisfied,
       disable_charger();                                                                      // turn off the MOSFET driver
       error_blink();                                                                          // blink LED to indicate an error
-      SOC = "Off"; 
+      SOC = "Off";
       break;
   }
 }
@@ -229,8 +238,8 @@ void CVM(){                                                // Constant Voltage M
   if((millis() - time) >= check){                          // if it's been more than the check time:
     update_Vcvm();  
   }
-  if (Vcvm < batteryVolts) Vcvm = (batteryVolts + 1);      // to fix a stutter on initial startup
-  stepAmount = abs(Vcvm - panelVolts);                     // take bigger steps when the voltage is far from the target
+  if (Vcvm < batteryVolts) Vcvm = (batteryVolts + 10);     // to fix a stutter on initial startup
+  stepAmount = (Vcvm - panelVolts)/10;                     // take bigger steps when the voltage is far from the target
   if (stepAmount < 1) stepAmount = 1;                      // the minimum step has to be one
   if (panelVolts > Vcvm){                                  // if the calculated MPP voltage is lower than the panel voltage,
     if (pulseWidth < 245){                                 // this is to keep pulseWidth from overflowing
@@ -248,15 +257,26 @@ void CVM(){                                                // Constant Voltage M
 
 void update_Vcvm(){
   disable_charger();                            // disable the MOSFET driver
-  delay(100);                                   // wait for the voltage to level out
-  for(int i=0;i<100;i++){                       // Take 100 readings and add them together
-    Voc+=analogRead(panelMeter);                // read the input voltage from solar panel
-    delay(1);                                   // wait a bit between each reading
+  delay(10);                                    // wait for the voltage to level out
+  Voc = 0;
+  for(int i=0;i<100;i++){
+    Voc += analogRead(panelMeter);              // read the panel voltage 100 times and add the values together
   }
-  Voc = Voc/100;                                // divide the result by 100 to get the average value
-  Voc = Voc*0.038136466707895;                  // multiply it by the scaling factor to produce a number in volts
-  Vcvm = Voc*0.76;                              // Vcvm is 76% of Voc
+  Voc = Voc/100;
+  Voc = (Voc*488)/1282;                         // multiply it by the scaling factor to produce a number in deci Volts
+  Vcvm = (Voc*76)/100;                          // Vcvm is 76% of Voc
   b = 1;                                        // reset the timer
+}
+
+void run_fan(){                                 // if you have a fan attached to load output
+  switch (charger_state){                       // run only in one case
+    case bulk:                                  // if we're in bulk charge
+      digitalWrite(fan, HIGH);                  // Turn on the fan
+      break;
+    default:                                    // All other cases
+      digitalWrite(fan, LOW);                   // Turn off the fan
+      break;
+  }
 }
 
 void run_load(){
@@ -271,52 +291,39 @@ void run_load(){
 }
 
 void error_blink(){                             // function for blinking the LED when there is an error
-  digitalWrite(13, HIGH);
-  delay(100);
-  digitalWrite(13, LOW);
-  delay(100);
-  digitalWrite(13, HIGH);
-  delay(100);
-  digitalWrite(13, LOW);
-  delay(100);
-  digitalWrite(13, HIGH);
-  delay(100);
-  digitalWrite(13, LOW);
-  delay(100);
-  digitalWrite(13, HIGH);
-  delay(100);
-  digitalWrite(13, LOW);
-  delay(100);
+  if((millis() - time) >= 200){                 // fast 1/5 second blink without delay
+    LEDstate = !LEDstate;
+    digitalWrite(13, LEDstate);
+    time = millis();
+  }
 }
 
 void sleep_blink(){                             // function for blinking the LED when sleeping
-  digitalWrite(13, HIGH);
-  delay(2000);
-  digitalWrite(13, LOW);
-  delay(2000);
+  if((millis() - time) >= 2000){                // slow 2 second blink without delay
+    LEDstate = !LEDstate;
+    digitalWrite(13, LEDstate);
+    time = millis();
+  }
 }
 
-void bulk_blink(){                              // function for blinking the LED in bulk
-  digitalWrite(13, HIGH);
-  delay(200);
-  digitalWrite(13, LOW);
-  delay(100);
-  digitalWrite(13, HIGH);
-  delay(400);
-  digitalWrite(13, LOW);
-  delay(100);
-  digitalWrite(13, HIGH);
-  delay(600);
-  digitalWrite(13, LOW);
-  delay(100);
+void establishContact() {
+  while (Serial.available() <= 0) {
+    Serial.print('A');   // send a capital A
+    delay(300);
+  }
 }
 
-void float_blink(){                             // function for blinking the LED in float
-  digitalWrite(13, HIGH);
-  delay(500);
-  digitalWrite(13, LOW);
-  delay(500);
+
+void sendtogui() {
+  if (Serial.available() > 0) {
+    inByte = Serial.read();
+    Serial.write(panelADC);
+    Serial.write(batteryADC);
+    Serial.write(pwm);
+    Serial.write(state);
+  }
 }
+
 
 void print_data() {                             // Print all the information to the serial port
   
