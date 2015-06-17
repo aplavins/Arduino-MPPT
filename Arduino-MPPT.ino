@@ -78,6 +78,7 @@ int LEDstate = LOW;           // to record the state of the LED
 //int errorCount = 0;           // record the # of times an error has occured
 int32_t frequency = 40000;    // Frequency (in HZ)
 unsigned long time = 0;       // Timer variable for timed charging cycles
+unsigned long time2 = 0;      // Second timer variable for blink cycles
 
 String enable = "starting";   // string of text to show enable pin of MOSFET driver
 String SOC = "Initializing";  // string of text to show the charger state
@@ -152,11 +153,13 @@ void read_data() {                                   // function for reading ana
 void mode_select(){
   if (batteryVolts < 100) charger_state = no_battery ;                                        // If battery voltage is below 10, there is no battery connected or dead / wrong battery
   else if (batteryVolts > Vmax) charger_state = error;                                        // If battery voltage is over 15, there's a problem
-  else if ((batteryVolts > 100) && (batteryVolts < Vmax) && (panelVolts > batteryVolts)){     // If battery voltage is in the normal range and there is light on the panel
+  else if ((batteryVolts > 100) && (batteryVolts < Vmax) && (panelVolts > Vmax)){             // If battery voltage is in the normal range and there is light on the panel
     if (batteryVolts >= (Vfloat-1)) charger_state = Float;                                    // If battery voltage is above 13.5, go into float charging
     else charger_state = bulk;                                                                // If battery voltage is less than 13.5, go into bulk charging
   }
-  else if (panelVolts < 100) charger_state = sleep;                                           // If there's no light on the panel, go to sleep
+  else if (panelVolts < Vmax){                                                                // If there's no light on the panel, go to sleep
+    charger_state = sleep;
+  }
 }
 
 void set_charger(){                                                                           // function for selecting the charging state
@@ -175,6 +178,7 @@ void set_charger(){                                                             
       SOC = "Sleep";
       sleep_blink();
       state = 1;
+      pulseWidth = 100;
       break;
       
     case bulk:                                                                                // the charger is in the bulk state
@@ -199,7 +203,7 @@ void set_charger(){                                                             
       error_blink();                                                                          // blink LED to indicate an error
       SOC = "Error";
       state = 4;
-      errorCount++;
+      //errorCount++;
       break;                                                                                  // this state needs a reset to escape from
       
     default:                                                                                  // if none of the other cases are satisfied,
@@ -241,7 +245,7 @@ void CVM(){                                                // Constant Voltage M
   if((millis() - time) >= check){                          // if it's been more than the check time:
     update_Vcvm();  
   }
-  if (Vcvm < batteryVolts) Vcvm = (batteryVolts + 10);     // to fix a stutter on initial startup
+  //if (Vcvm < batteryVolts) Vcvm = (batteryVolts + 10);     // to fix a stutter on initial startup
   stepAmount = (Vcvm - panelVolts)/10;                     // take bigger steps when the voltage is far from the target
   if (stepAmount < 1) stepAmount = 1;                      // the minimum step has to be one
   if (panelVolts > Vcvm){                                  // if the calculated MPP voltage is lower than the panel voltage,
@@ -294,18 +298,18 @@ void run_load(){
 }
 
 void error_blink(){                             // function for blinking the LED when there is an error
-  if((millis() - time) >= 200){                 // fast 1/5 second blink without delay
+  if((millis() - time2) >= 200){                 // fast 1/5 second blink without delay
     LEDstate = !LEDstate;
     digitalWrite(13, LEDstate);
-    time = millis();
+    time2 = millis();
   }
 }
 
 void sleep_blink(){                             // function for blinking the LED when sleeping
-  if((millis() - time) >= 2000){                // slow 2 second blink without delay
+  if((millis() - time2) >= 2000){                // slow 2 second blink without delay
     LEDstate = !LEDstate;
     digitalWrite(13, LEDstate);
-    time = millis();
+    time2 = millis();
   }
 }
 
