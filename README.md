@@ -27,6 +27,16 @@ Specs:
 - 30A output max  (with heatsinks and fan)
 - 30A load capacity (with heatsinks and fan)
 
+Differences with Deba168's design:
+- Larger copper cross section in high current paths
+- 20ohm resistors in series on the MOSFET gates
+- added pull-up and pull-down resistors to prevent undesireable behaviour on startup
+- Larger inductor 20uH 26A peak
+- added fan
+- removed diode between high side MOSFET gates
+- Constant voltage method of MPPT that doesn't require current sense
+- Zener diodes to protect the arduino from over-voltage
+
 Warning!:
 -Disconnecting the battery while in a charging state will cause and overshoot of voltage on the battery side.
 This could damage any loads that are running from the battery, including the arduino, charge controller, 
