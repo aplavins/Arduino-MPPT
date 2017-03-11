@@ -27,7 +27,7 @@ Specs:
 - 30A output max  (with heatsinks and fan)
 - 30A load capacity (with heatsinks and fan)
 
-Differences with Deba168's design:
+Physical Improvements:
 - Larger copper cross section in high current paths
 - 20ohm resistors in series on the MOSFET gates
 - added pull-up and pull-down resistors to prevent undesireable behaviour on startup
