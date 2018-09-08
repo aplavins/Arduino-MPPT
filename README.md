@@ -31,7 +31,7 @@ Physical Improvements:
 - Larger copper cross section in high current paths
 - 20ohm resistors in series on the MOSFET gates
 - added pull-up and pull-down resistors to prevent undesireable behaviour on startup
-- Larger inductor 20uH 26A peak
+- Larger inductor 20µH 26A peak
 - added fan
 - removed diode between high side MOSFET gates
 - Constant voltage method of MPPT that doesn't require current sense
