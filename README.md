@@ -45,4 +45,6 @@ and computer (if it's connected at the time)
 to short out and fail (sometimes violently).
 
 This code requires that you have these dependancies:
-https://arduino-pwm-frequency-library.googlecode.com/files/Arduino%20PWM%20Frequency%20Library%20v_05.zip
+https://code.google.com/archive/p/arduino-pwm-frequency-library/downloads
+
+
