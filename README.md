@@ -38,7 +38,7 @@ Physical Improvements:
 - Zener diodes to protect the arduino from over-voltage
 
 Warning!:
--Disconnecting the battery while in a charging state will cause and overshoot of voltage on the battery side.
+-Disconnecting the battery while in a charging state will cause an overshoot of voltage on the battery side.
 This could damage any loads that are running from the battery, including the arduino, charge controller, 
 and computer (if it's connected at the time)
 -Setting the pulseWidth to values less than 40% for even a few milliseconds will cause the low side MOSFET
